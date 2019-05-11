@@ -1,0 +1,228 @@
+#define FUSE_USE_VERSION 28
+#define _DEFAULT_SOURCE
+
+#define _XOPEN_SOURCE 500
+
+#include <fuse.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <errno.h>
+#include <sys/time.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+static const char *mountable = "/home/durianpeople/Documents/Notes/SISOP/mountable";
+char *path_transport;
+int debug = 1;
+
+typedef struct node
+{
+    struct node *left;
+    struct node *right;
+    char *key;
+    char *path;
+    int duplicate;
+} Node;
+
+Node *root = NULL;
+
+void insert(Node **tree, char *key, char *path, struct stat st, void *buf, fuse_fill_dir_t *filler)
+{
+    Node *temp = NULL;
+    if ((*tree) == NULL)
+    {
+        temp = (Node *)malloc(sizeof(Node));
+        temp->left = temp->right = NULL;
+        temp->key = (char *)malloc((strlen(key) + 1) * sizeof(char));
+        temp->path = (char *)malloc((strlen(path) + 1) * sizeof(char));
+        sprintf(temp->key, "%s", key);
+        sprintf(temp->path, "%s", path);
+        temp->duplicate = 0;
+        *tree = temp;
+        (*filler)(buf, temp->key, &st, 0);
+        return;
+    }
+    if (strcmp(key, (*tree)->key) < 0)
+    {
+        insert(&(*tree)->left, key, path, st, buf, filler);
+    }
+    else if (strcmp(key, (*tree)->key) > 0)
+    {
+        insert(&(*tree)->right, key, path, st, buf, filler);
+    }
+    else if (strcmp(key, (*tree)->key) == 0)
+    {
+        (*tree)->duplicate++;
+        char key_u[strlen(key) + 100];
+        sprintf(key_u, "%s_(%d)", key, (*tree)->duplicate);
+        insert(&(*tree), key_u, path, st, buf, filler);
+    }
+}
+
+char *findPath(Node *tree, char *key)
+{
+    if (tree == NULL)
+    {
+        return NULL;
+    }
+    if (strcmp(key, tree->key) == 0)
+    {
+        return tree->path;
+    }
+    else if (strcmp(key, tree->key) < 0)
+    {
+        return findPath((tree->left), key);
+    }
+    else if (strcmp(key, tree->key) > 0)
+    {
+        return findPath((tree->right), key);
+    }
+    else
+        return "";
+}
+
+void deltree(Node *tree)
+{
+    if (tree != NULL)
+    {
+        free(tree->key);
+        free(tree->path);
+        deltree(tree->left);
+        deltree(tree->right);
+        free(tree);
+    }
+}
+
+int listdirlevel = 0;
+
+void listdir(const char *name, void *buf, fuse_fill_dir_t *filler)
+{
+    DIR *dir;
+    struct dirent *entry;
+
+    if (!(dir = opendir(name)))
+        return;
+
+    while ((entry = readdir(dir)) != NULL)
+    {
+        struct stat st;
+        memset(&st, 0, sizeof(st));
+        st.st_ino = entry->d_ino;
+        st.st_mode = entry->d_type << 12;
+        if (entry->d_type == DT_DIR)
+        {
+            char path[1024];
+            if ((strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0))
+            {
+                // if (strcmp(name, mountable) == 0)
+                // {
+                char *dotpath = (char *)malloc((strlen(name) + 5) * sizeof(char));
+                sprintf(dotpath, "/%s/%s", name, entry->d_name);
+                insert(&root, entry->d_name, dotpath, st, buf, filler);
+                free(dotpath);
+                // }
+                continue;
+            }
+            else
+            {
+                snprintf(path, sizeof(path), "%s/%s", name, entry->d_name);
+                listdir(path, buf, filler);
+            }
+        }
+        else
+        {
+            char fullpath[strlen(entry->d_name) + strlen(mountable) + 10];
+            sprintf(fullpath, "%s/%s", mountable, entry->d_name);
+            char shortpath[strlen(entry->d_name) + 3];
+            sprintf(shortpath, "/%s", entry->d_name);
+            insert(&(root), shortpath, fullpath, st, buf, filler);
+        }
+    }
+    closedir(dir);
+}
+
+static int xmp_getattr(const char *path, struct stat *stbuf)
+{
+    if (debug)
+        printf("GETATTR CALLED AT %s\n", path);
+    char fpath[strlen(path) + strlen(mountable) + 10];
+    if (strcmp(path, "/") == 0)
+    {
+        path = mountable;
+        sprintf(fpath, "%s", path);
+    }
+    else
+    {
+        free(path_transport);
+        path_transport = (char *)malloc((strlen(path) + 1) * sizeof(char));
+        sprintf(path_transport, "%s", path);
+        sprintf(fpath, "%s", findPath(root, path_transport));
+    }
+
+    int res;
+    printf("Revealed path: %s\n", fpath);
+    res = lstat(fpath, stbuf);
+    if (res == -1)
+        return -errno;
+
+    return 0;
+}
+
+static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
+                       off_t offset, struct fuse_file_info *fi)
+{
+    deltree(root);
+    root = NULL;
+    (void)offset;
+    (void)fi;
+    char fpath[1000];
+    if (strcmp(path, "/") == 0)
+    {
+        path = mountable;
+        sprintf(fpath, "%s", path);
+    }
+    else
+        sprintf(fpath, "%s%s", mountable, path);
+
+    listdir(fpath, buf, &filler);
+    return 0;
+}
+
+static int xmp_statfs(const char *path, struct statvfs *stbuf)
+{
+    int res;
+    char fpath[1000];
+    sprintf(fpath, "%s%s", mountable, path);
+    res = statvfs(fpath, stbuf);
+    if (res == -1)
+        return -errno;
+
+    return 0;
+}
+
+static void *xmp_init(struct fuse_conn_info *conn)
+{
+    return 0;
+}
+
+void xmp_destroy(void *userdata)
+{
+    deltree(root);
+}
+
+static struct fuse_operations xmp_oper = {
+    .getattr = xmp_getattr,
+    .readdir = xmp_readdir,
+    .statfs = xmp_statfs,
+    .init = xmp_init,
+    .destroy = xmp_destroy,
+};
+
+int main(int argc, char *argv[])
+{
+    umask(0);
+    return fuse_main(argc, argv, &xmp_oper, NULL);
+}
