@@ -278,5 +278,5 @@ void playlist_exit(){
 }
 ```
 
-FUSE
+## FUSE
 untuk fuse kami menggunakan structure tree, dimana key merupakan nama file dan path sebagai full_path dari file tersebut.
