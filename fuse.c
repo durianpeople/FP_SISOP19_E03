@@ -12,7 +12,7 @@
 #include <errno.h>
 
 // Modifiable constant
-static const char *mountable = "/home/durianpeople/Documents/Notes/SISOP/mountable";
+static const char *mountable = "/home/akmal/Documents/FP_SISOP19_E03/mountable";
 
 // Type definition
 typedef struct node
@@ -69,6 +69,7 @@ static struct fuse_operations xmp_oper = {
 int main(int argc, char *argv[])
 {
     umask(0);
+    printf("%s\n", argv[1] );
     return fuse_main(argc, argv, &xmp_oper, NULL);
 }
 
@@ -219,6 +220,7 @@ static int xmp_getattr(const char *path, struct stat *stbuf)
 static int xmp_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
                        off_t offset, struct fuse_file_info *fi)
 {
+    printf("Manuk pak eko\n");
     deltree(root);
     root = NULL;
     (void)offset;
